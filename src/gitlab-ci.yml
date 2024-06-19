@@ -1,0 +1,76 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  NODE_TAG_VERSION: "latest"
+
+
+####   TEMPLATES
+##
+.build_template: &build_template
+  image: node:${NODE_TAG_VERSION}
+  stage: build
+  script:
+    - cp -fa "./environments/$ENVIRONMENT/config.php" data/
+    - npm install --progress=false
+    - npm run build
+  artifacts:
+    paths:
+      - node_modules
+      - data
+    expire_in: 1 week
+
+.deploy_template: &deploy_template
+  stage: deploy
+  script:
+    - sudo rsync -acvh --progress --exclude=".gitlab-ci.yml" --exclude=".git*" --exclude=".idea*" ./ $PROJ_DIR
+    - docker compose --project-name 0-sibset-ru up -d --build --remove-orphans
+    - docker system prune --force
+    - bash $TG_NOTIFICATION
+
+####   BUILD
+##
+build_prod:
+  <<: *build_template
+  variables:
+    ENVIRONMENT: "prod"  
+  environment:
+    name: production
+  tags:
+    - builder-docker-prod
+  when: manual
+  only:
+    - master
+
+build_dev:
+  <<: *build_template
+  variables:
+    ENVIRONMENT: "dev"
+  environment:
+    name: development
+  tags:
+    - builder-docker-dev
+  when: manual
+  only:
+    - master
+    - /.*-.*/
+
+####   DEPLOYMENTS
+##
+deploy_dev:
+  <<: *deploy_template
+  variables:
+    PROJ_DIR: "/fs/www/dev-$CI_PROJECT_NAME/"
+    TG_NOTIFICATION: "$DEV_TELTEGRAM_NOTIFICATION"
+  tags:
+    - develop-docker
+  environment:
+    name: development
+  when: on_success
+  needs:
+    - job: build_dev
+      artifacts: true
+  only:
+    - master
+    - /.*-.*/
